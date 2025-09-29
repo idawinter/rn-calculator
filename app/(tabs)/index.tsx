@@ -30,6 +30,17 @@ function isOp(ch: string) {
   return ["+", "-", "×", "÷", "*", "/"].includes(ch);
 }
 
+function endsWithValueToken(ch: string) {
+  return /\d/.test(ch) || ch === ")" || ch === "π" || ch === "e";
+}
+
+function needsImplicitMultiply(prev: string, nextStartsWith: string) {
+  if (!prev) return false;
+  const last = prev.slice(-1);
+  const nextIsValue = nextStartsWith === "(" || nextStartsWith === "π" || nextStartsWith === "e";
+  return endsWithValueToken(last) && nextIsValue;
+}
+
 function replaceLastNumber(expr: string, replacer: (num: string) => string) {
   const m = expr.match(/(\d+(\.\d+)?)$/);
   if (!m) return expr;
@@ -38,7 +49,7 @@ function replaceLastNumber(expr: string, replacer: (num: string) => string) {
 }
 
 function applyPercent(expr: string) {
-  // turns the last number into (n/100) so 50 % -> (50/100)
+  // turns the last number into (n/100)
   return replaceLastNumber(expr, (n) => `(${n}/100)`);
 }
 
@@ -52,7 +63,6 @@ function toggleSign(expr: string) {
     const [full, n] = numMatch;
     return expr.slice(0, -full.length) + `(-${n})`;
   }
-  // If nothing typed yet, start typing a negative number
   return expr.length === 0 ? "-" : expr;
 }
 
@@ -74,11 +84,11 @@ export default function HomeScreen() {
 
   // ui state
   const [isSciOpen, setIsSciOpen] = useState(false);
-  const [angleMode, setAngleMode] = useState<AngleMode>("DEG"); // (wired later for trig)
+  const [angleMode, setAngleMode] = useState<AngleMode>("DEG"); // (trig wired later)
 
   // animate scientific panel
   const sciHeight = useRef(new Animated.Value(0)).current;
-  const targetHeight = 200;
+  const targetHeight = 120;
 
   useEffect(() => {
     Animated.timing(sciHeight, {
@@ -103,7 +113,7 @@ export default function HomeScreen() {
 
   const sciRows = useMemo(
     () => [
-      ["sin", "cos", "tan", angleMode],
+      ["sin", "cos", "tan", angleMode], // trig later
       ["ln", "log", "√", "x²"],
       ["π", "e", "(", ")"],
       ["x^y", "1/x", "!", "AC"],
@@ -116,7 +126,6 @@ export default function HomeScreen() {
     const clean = sanitize(expr);
     try {
       const val = parser.parse(clean).evaluate({
-        // constants available to expr-eval
         pi: Math.PI,
         e: Math.E,
       });
@@ -124,6 +133,14 @@ export default function HomeScreen() {
     } catch {
       return "Error";
     }
+  }
+
+  function appendToken(prev: string, token: string) {
+    // handle implicit multiplication for "(", "π", "e"
+    if (needsImplicitMultiply(prev, token[0])) {
+      return prev + "×" + token;
+    }
+    return prev + token;
   }
 
   // input handler
@@ -152,6 +169,51 @@ export default function HomeScreen() {
         setAngleMode((m) => (m === "DEG" ? "RAD" : "DEG"));
         return;
 
+      // ---- newly wired scientific basics ----
+      case "π":
+      case "e": {
+        setExpression((prev) => appendToken(prev, label));
+        return;
+      }
+
+      case "x²": {
+        // append ^2 to the last value token (number, pi/e, or ')')
+        setExpression((prev) => {
+          if (!prev) return prev;
+          const last = prev.slice(-1);
+          if (endsWithValueToken(last)) return prev + "^2";
+          return prev; // ignore if nothing to square
+        });
+        return;
+      }
+
+      case "√": {
+        // if last token is a number, wrap it: sqrt(n); else start sqrt(
+        setExpression((prev) => {
+          const numMatch = prev.match(/(\d+(\.\d+)?)$/);
+          if (numMatch) {
+            const [full, n] = numMatch;
+            return prev.slice(0, -full.length) + `sqrt(${n})`;
+          }
+          // If previous ends with value token like ')' or 'π'/'e', insert implicit × then sqrt(
+          const token = "sqrt(";
+          return appendToken(prev, token);
+        });
+        return;
+      }
+
+      case "x^y": {
+        // only add ^ if there's a value before it
+        setExpression((prev) => {
+          if (!prev) return prev;
+          const last = prev.slice(-1);
+          if (endsWithValueToken(last)) return prev + "^";
+          return prev;
+        });
+        return;
+      }
+      // ---------------------------------------
+
       case "=": {
         if (!expression.trim()) {
           setResult(result);
@@ -159,7 +221,6 @@ export default function HomeScreen() {
         }
         const r = evaluateNow(expression);
         setResult(r);
-        // allow chaining: use result as next expression start if valid
         if (r !== "Error") setExpression(r);
         return;
       }
@@ -179,9 +240,12 @@ export default function HomeScreen() {
         return;
       }
 
-      // allowed characters to append directly
+      // parens + digits + dot
       case "(":
-      case ")":
+      case ")": {
+        setExpression((prev) => appendToken(prev, label));
+        return;
+      }
       case ".":
       case "0":
       case "1":
@@ -197,7 +261,7 @@ export default function HomeScreen() {
         return;
       }
 
-      // scientific keys ignored for now (we’ll wire them next)
+      // ignore remaining scientific keys for now (sin, cos, tan, ln, log, 1/x, !)
       default:
         return;
     }
@@ -212,14 +276,14 @@ export default function HomeScreen() {
         return (
           <CalcKey
             key={`bkey-${rowIndex}-${i}`}
-            label={label}
+            label={label} // keep the internal label so onPress still toggles the panel
             onPress={onKeyPress}
-            variant={
-              isOperator ? "operator" : label === "C" ? "accent" : isMore ? "muted" : "default"
-            }
+            variant={isOperator ? "operator" : label === "C" ? "accent" : isMore ? "muted" : "default"}
             compact={false}
             wide={isZero}
+            display={isMore ? "More functions" : undefined}
           />
+
         );
       })}
     </View>
@@ -259,11 +323,22 @@ export default function HomeScreen() {
       </View>
 
       {/* Scientific panel (collapsed by default) */}
-      <Animated.View style={[styles.scientificPanel, { height: sciHeight }]}>
-        <View pointerEvents={isSciOpen ? "auto" : "none"} style={styles.scientificInner}>
-          {sciRows.map(renderSciRow)}
-        </View>
-      </Animated.View>
+<Animated.View style={[styles.scientificPanel, { height: sciHeight }]}>
+  {isSciOpen && (
+    <View style={styles.handleWrap}>
+      <View style={styles.handleBar} />
+      <Text style={styles.handleHint}>Scroll for more</Text>
+    </View>
+  )}
+  <ScrollView
+    style={{ flex: 1 }}
+    contentContainerStyle={styles.scientificInner}
+    showsVerticalScrollIndicator={true}
+    scrollEnabled={isSciOpen}
+  >
+    {sciRows.map(renderSciRow)}
+  </ScrollView>
+</Animated.View>
 
       {/* Basic keypad */}
       <View style={styles.keypad}>{basicRows.map(renderBasicRow)}</View>
@@ -279,12 +354,14 @@ function CalcKey({
   variant = "default",
   compact = false,
   wide = false,
+  display,
 }: {
   label: string;
   onPress: (label: string) => void;
   variant?: KeyVariant;
   compact?: boolean;
   wide?: boolean;
+  display?: string; // 👈 new
 }) {
   const stylesByVariant: Record<KeyVariant, object[]> = {
     default: [styles.key, styles.keyDefault],
@@ -316,9 +393,9 @@ function CalcKey({
           variant === "toggle" && styles.keyTextToggle,
           compact && styles.keyTextCompact,
         ]}
-        numberOfLines={1}
+        numberOfLines={2}
       >
-        {label}
+        {display ?? label} {/* 👈 use display label if provided */}
       </Text>
     </Pressable>
   );
@@ -393,11 +470,29 @@ const styles = StyleSheet.create({
 
   keyPressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
 
-  keyText: { color: "#e7ebf0", fontSize: 24, fontWeight: "600" },
+  keyText: {
+    color: "#e7ebf0",
+    fontSize: 24,
+    fontWeight: "600",
+    textAlign: "center", // center lines
+    width: "100%",       // make Text fill the button width so centering works
+  },
+  
   keyTextOperator: { color: "#e7ebf0" },
   keyTextAccent: { color: "#ffffff" },
-  keyTextMuted: { color: "#9aa0a6" },
+  keyTextMuted: { color: "#9aa0a6", fontSize: 11, fontWeight: "600" },
   keyTextScientific: { color: "#c7cbd3", fontSize: 18, fontWeight: "600" },
   keyTextToggle: { color: "#aeb7ff", fontSize: 18, fontWeight: "700", letterSpacing: 0.5 },
   keyTextCompact: { fontSize: 18, fontWeight: "600" },
+
+  handleWrap: { alignItems: "center", paddingTop: 6 },
+  handleBar: {
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#2a2f3a",
+    marginBottom: 6,
+  },
+  handleHint: { color: "#9aa0a6", fontSize: 12, fontWeight: "500", marginBottom: 6 },
+
 });
