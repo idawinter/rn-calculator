@@ -13,17 +13,17 @@ This app demonstrates:
 - **Expression display**: compact expression line + large result line
 - **More functions panel** (collapsed by default):
   - `π`, `e`, `√`, `x²`, `x^y`, `(`, `)`
-  - scrollable with a visible scrollbar and a “grab handle” + hint
+  - Scrollable with a visible scrollbar and a “grab handle” + hint
 - **Implicit multiply** for things like `2(3+4)` or `2π`
-- **Expo Router** structure: screen lives at `app/(tabs)/index.tsx`
-
-> Note: right now **C** clears everything (full reset). Backspace and a distinct **AC** can be added if desired.
+- **Pink theme with light/dark toggle** (tap the chip at the top)
+- **Haptics on key press** (light taps on keys, stronger bump on `=`)
 
 ## 🧰 Tech Stack
 - React Native (Expo)
 - Expo Router
 - TypeScript (created by the template)
 - `expr-eval` for safe expression parsing/evaluation
+- `expo-haptics` for tactile feedback
 
 ## 🚀 Run locally
 ```bash
@@ -31,16 +31,22 @@ npm install
 npx expo start
 
 
-## additional notes:
 # Additional Notes
 
 ## Overview
 This calculator is built with **React Native (Expo)** using the **Expo Router** template. The UI emphasizes basic operations, with advanced functions behind a collapsible “More functions” panel.
 
-## Key Design Decisions
-- **Prominence for basics:** Digits and primary operators are always visible; advanced keys are tucked away to reduce cognitive load.
-- **Scrollable advanced panel:** Keeps `=` visible while accessing extra keys. A grab handle + “Scroll for more” hint improves discoverability.
-- **Lightweight math engine:** Uses `expr-eval` for safe expression parsing/evaluation, avoiding heavy native deps.
+## Key Design Decisions:
+
+- Keep basic operations prominent; advanced functions live behind “More functions.”
+
+- Collapsible panel is scrollable with a visible indicator and a small grab handle + “Scroll for more” hint.
+
+- Lightweight device integration via Haptics to reinforce touch feedback.
+
+- Avoid heavy math libs; expr-eval is enough for this level and safe to run on-device.
+
+- Theme support kept simple: pink palette in both dark and light modes.
 
 ## Features Implemented
 - Basic ops: `0–9`, `.`, `+`, `−`, `×`, `÷`, `=`, `%`, `±`
