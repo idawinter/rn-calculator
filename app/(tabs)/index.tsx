@@ -1,5 +1,6 @@
 // app/(tabs)/index.tsx
 import { StatusBar } from "expo-status-bar";
+import { Parser } from "expr-eval";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -14,19 +15,70 @@ import {
 } from "react-native";
 
 type AngleMode = "DEG" | "RAD";
+const parser = new Parser();
 
+// ---------- helpers ----------
+function sanitize(expr: string) {
+  return expr
+    .replace(/×/g, "*")
+    .replace(/÷/g, "/")
+    .replace(/−/g, "-")
+    .replace(/π/g, "pi");
+}
+
+function isOp(ch: string) {
+  return ["+", "-", "×", "÷", "*", "/"].includes(ch);
+}
+
+function replaceLastNumber(expr: string, replacer: (num: string) => string) {
+  const m = expr.match(/(\d+(\.\d+)?)$/);
+  if (!m) return expr;
+  const [full, num] = m;
+  return expr.slice(0, -full.length) + replacer(num);
+}
+
+function applyPercent(expr: string) {
+  // turns the last number into (n/100) so 50 % -> (50/100)
+  return replaceLastNumber(expr, (n) => `(${n}/100)`);
+}
+
+function toggleSign(expr: string) {
+  // If the expression ends with (-n), unwrap to n; else wrap last number as (-n)
+  if (/\(-\d+(\.\d+)?\)$/.test(expr)) {
+    return expr.replace(/\(-(\d+(\.\d+)?)\)$/, (_s, n) => n);
+  }
+  const numMatch = expr.match(/(\d+(\.\d+)?)$/);
+  if (numMatch) {
+    const [full, n] = numMatch;
+    return expr.slice(0, -full.length) + `(-${n})`;
+  }
+  // If nothing typed yet, start typing a negative number
+  return expr.length === 0 ? "-" : expr;
+}
+
+function formatResult(value: number) {
+  if (!isFinite(value)) return "Error";
+  const asStr = value.toString();
+  if (asStr.includes("e")) {
+    return value.toPrecision(10).replace(/\.?0+$/, "");
+  }
+  const rounded = Math.round(value * 1e10) / 1e10;
+  return String(rounded).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+// ---------- component ----------
 export default function HomeScreen() {
-  // Display state (we’ll wire real math next)
+  // display state
   const [expression, setExpression] = useState("");
   const [result, setResult] = useState("0");
 
-  // UI state
+  // ui state
   const [isSciOpen, setIsSciOpen] = useState(false);
-  const [angleMode, setAngleMode] = useState<AngleMode>("DEG");
+  const [angleMode, setAngleMode] = useState<AngleMode>("DEG"); // (wired later for trig)
 
-  // Simple height animation for the scientific panel
+  // animate scientific panel
   const sciHeight = useRef(new Animated.Value(0)).current;
-  const targetHeight = 200; // px; adjust as you like
+  const targetHeight = 200;
 
   useEffect(() => {
     Animated.timing(sciHeight, {
@@ -37,7 +89,7 @@ export default function HomeScreen() {
     }).start();
   }, [isSciOpen]);
 
-  // Basic keypad layout (prominent)
+  // layouts
   const basicRows = useMemo(
     () => [
       ["C", "±", "%", "÷"],
@@ -49,7 +101,6 @@ export default function HomeScreen() {
     []
   );
 
-  // Scientific keypad (de-emphasized)
   const sciRows = useMemo(
     () => [
       ["sin", "cos", "tan", angleMode],
@@ -60,32 +111,94 @@ export default function HomeScreen() {
     [angleMode]
   );
 
+  // evaluation
+  function evaluateNow(expr: string) {
+    const clean = sanitize(expr);
+    try {
+      const val = parser.parse(clean).evaluate({
+        // constants available to expr-eval
+        pi: Math.PI,
+        e: Math.E,
+      });
+      return formatResult(val);
+    } catch {
+      return "Error";
+    }
+  }
+
+  // input handler
   function onKeyPress(label: string) {
-    // Placeholder behavior to prove UI works. We’ll add real math next.
     switch (label) {
       case "C":
       case "AC":
         setExpression("");
         setResult("0");
         return;
+
       case "±":
-        setExpression((prev) =>
-          prev.startsWith("−") ? prev.slice(1) : prev ? "−" + prev : prev
-        );
+        setExpression((prev) => toggleSign(prev));
         return;
+
+      case "%":
+        setExpression((prev) => applyPercent(prev));
+        return;
+
       case "⋯ More":
         setIsSciOpen((v) => !v);
         return;
+
       case "DEG":
       case "RAD":
         setAngleMode((m) => (m === "DEG" ? "RAD" : "DEG"));
         return;
-      case "=":
-        // For now just mirror expression
-        setResult(expression || "0");
+
+      case "=": {
+        if (!expression.trim()) {
+          setResult(result);
+          return;
+        }
+        const r = evaluateNow(expression);
+        setResult(r);
+        // allow chaining: use result as next expression start if valid
+        if (r !== "Error") setExpression(r);
         return;
-      default:
+      }
+
+      // basic operators
+      case "+":
+      case "−":
+      case "×":
+      case "÷": {
+        setExpression((prev) => {
+          if (!prev && result !== "0") return result + label; // start from last result
+          if (!prev) return ""; // ignore leading operator without a number
+          const last = prev.slice(-1);
+          if (isOp(last)) return prev.slice(0, -1) + label; // prevent double operators
+          return prev + label;
+        });
+        return;
+      }
+
+      // allowed characters to append directly
+      case "(":
+      case ")":
+      case ".":
+      case "0":
+      case "1":
+      case "2":
+      case "3":
+      case "4":
+      case "5":
+      case "6":
+      case "7":
+      case "8":
+      case "9": {
         setExpression((prev) => (prev + label).trim());
+        return;
+      }
+
+      // scientific keys ignored for now (we’ll wire them next)
+      default:
         return;
     }
   }
@@ -135,11 +248,7 @@ export default function HomeScreen() {
 
       {/* Display */}
       <View style={styles.display}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.expressionWrap}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.expressionWrap}>
           <Text style={styles.expressionText} numberOfLines={1}>
             {expression || " "}
           </Text>
