@@ -1,4 +1,5 @@
 // app/(tabs)/index.tsx
+import * as Haptics from "expo-haptics";
 import { StatusBar } from "expo-status-bar";
 import { Parser } from "expr-eval";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -15,7 +16,65 @@ import {
 } from "react-native";
 
 type AngleMode = "DEG" | "RAD";
+type ThemeMode = "dark" | "light";
+
 const parser = new Parser();
+
+// --------- theme ---------
+type ThemeColors = {
+  bg: string;
+  surface: string;
+  surfaceAlt: string;
+  primary: string; // pink accent
+  keyDefault: string;
+  keyOperator: string;
+  keyAccent: string;
+  keyMuted: string;
+  keyScientific: string;
+  text: string;
+  textDim: string;
+  textAccent: string;
+  border: string;
+  borderAlt: string;
+  handle: string;
+};
+
+const THEMES: Record<ThemeMode, ThemeColors> = {
+  dark: {
+    bg: "#0b0b0c",
+    surface: "#0b0b0c",
+    surfaceAlt: "#0e0f11",
+    primary: "#ff4da6",
+    keyDefault: "#1a1c22",
+    keyOperator: "#2b2f3a",
+    keyAccent: "#ff4da6",
+    keyMuted: "#15171c",
+    keyScientific: "#14161b",
+    text: "#ffffff",
+    textDim: "#9aa0a6",
+    textAccent: "#ffffff",
+    border: "#1f222a",
+    borderAlt: "#3a4150",
+    handle: "#2a2f3a",
+  },
+  light: {
+    bg: "#fff8fb",
+    surface: "#fff8fb",
+    surfaceAlt: "#fff0f6",
+    primary: "#ff2d8a",
+    keyDefault: "#ffe6f2",
+    keyOperator: "#ffd6ea",
+    keyAccent: "#ff2d8a",
+    keyMuted: "#ffeef6",
+    keyScientific: "#ffe6f2",
+    text: "#1a1a1a",
+    textDim: "#5c5f66",
+    textAccent: "#ffffff",
+    border: "#ffd1e5",
+    borderAlt: "#ffbddb",
+    handle: "#e7a9c4",
+  },
+};
 
 // ---------- helpers ----------
 function sanitize(expr: string) {
@@ -78,6 +137,11 @@ function formatResult(value: number) {
 
 // ---------- component ----------
 export default function HomeScreen() {
+  // theme state
+  const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
+  const t = THEMES[themeMode];
+  const styles = useMemo(() => createStyles(t), [t]);
+
   // display state
   const [expression, setExpression] = useState("");
   const [result, setResult] = useState("0");
@@ -88,7 +152,7 @@ export default function HomeScreen() {
 
   // animate scientific panel
   const sciHeight = useRef(new Animated.Value(0)).current;
-  const targetHeight = 120;
+  const targetHeight = 120; // keep "=" visible
 
   useEffect(() => {
     Animated.timing(sciHeight, {
@@ -145,6 +209,15 @@ export default function HomeScreen() {
 
   // input handler
   function onKeyPress(label: string) {
+    // Haptics (stronger so it's noticeable)
+  if (Platform.OS !== "web") {
+    if (label === "=") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  }
+
     switch (label) {
       case "C":
       case "AC":
@@ -169,41 +242,33 @@ export default function HomeScreen() {
         setAngleMode((m) => (m === "DEG" ? "RAD" : "DEG"));
         return;
 
-      // ---- newly wired scientific basics ----
+      // ---- scientific basics wired ----
       case "π":
       case "e": {
         setExpression((prev) => appendToken(prev, label));
         return;
       }
-
       case "x²": {
-        // append ^2 to the last value token (number, pi/e, or ')')
         setExpression((prev) => {
           if (!prev) return prev;
           const last = prev.slice(-1);
           if (endsWithValueToken(last)) return prev + "^2";
-          return prev; // ignore if nothing to square
+          return prev;
         });
         return;
       }
-
       case "√": {
-        // if last token is a number, wrap it: sqrt(n); else start sqrt(
         setExpression((prev) => {
           const numMatch = prev.match(/(\d+(\.\d+)?)$/);
           if (numMatch) {
             const [full, n] = numMatch;
             return prev.slice(0, -full.length) + `sqrt(${n})`;
           }
-          // If previous ends with value token like ')' or 'π'/'e', insert implicit × then sqrt(
-          const token = "sqrt(";
-          return appendToken(prev, token);
+          return appendToken(prev, "sqrt(");
         });
         return;
       }
-
       case "x^y": {
-        // only add ^ if there's a value before it
         setExpression((prev) => {
           if (!prev) return prev;
           const last = prev.slice(-1);
@@ -212,7 +277,7 @@ export default function HomeScreen() {
         });
         return;
       }
-      // ---------------------------------------
+      // ---------------------------------
 
       case "=": {
         if (!expression.trim()) {
@@ -261,10 +326,15 @@ export default function HomeScreen() {
         return;
       }
 
-      // ignore remaining scientific keys for now (sin, cos, tan, ln, log, 1/x, !)
       default:
         return;
     }
+  }
+
+  // theme toggle
+  function toggleTheme() {
+    if (Platform.OS !== "web") Haptics.selectionAsync().catch(() => {});
+    setThemeMode((m) => (m === "dark" ? "light" : "dark"));
   }
 
   const renderBasicRow = (row: string[], rowIndex: number) => (
@@ -276,14 +346,16 @@ export default function HomeScreen() {
         return (
           <CalcKey
             key={`bkey-${rowIndex}-${i}`}
-            label={label} // keep the internal label so onPress still toggles the panel
+            label={label}
             onPress={onKeyPress}
-            variant={isOperator ? "operator" : label === "C" ? "accent" : isMore ? "muted" : "default"}
+            variant={
+              isOperator ? "operator" : label === "C" ? "accent" : isMore ? "muted" : "default"
+            }
             compact={false}
             wide={isZero}
-            display={isMore ? "More functions" : undefined}
+            display={isMore ? "More functions" : undefined} // keep static label
+            styles={styles}
           />
-
         );
       })}
     </View>
@@ -300,6 +372,7 @@ export default function HomeScreen() {
             onPress={onKeyPress}
             variant={isToggle ? "toggle" : "scientific"}
             compact
+            styles={styles}
           />
         );
       })}
@@ -308,11 +381,24 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar style={Platform.OS === "ios" ? "light" : "auto"} />
+      <StatusBar style={Platform.OS === "ios" ? (themeMode === "dark" ? "light" : "dark") : "auto"} />
+
+      {/* Top bar with theme toggle */}
+      <View style={styles.topBar}>
+        <Pressable onPress={toggleTheme} style={styles.themeChip} android_ripple={{ borderless: true }}>
+          <Text style={styles.themeChipText}>
+            {themeMode === "dark" ? "🌙  Dark • Pink" : "☀️  Light • Pink"}
+          </Text>
+        </Pressable>
+      </View>
 
       {/* Display */}
       <View style={styles.display}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.expressionWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.expressionWrap}
+        >
           <Text style={styles.expressionText} numberOfLines={1}>
             {expression || " "}
           </Text>
@@ -323,22 +409,22 @@ export default function HomeScreen() {
       </View>
 
       {/* Scientific panel (collapsed by default) */}
-<Animated.View style={[styles.scientificPanel, { height: sciHeight }]}>
-  {isSciOpen && (
-    <View style={styles.handleWrap}>
-      <View style={styles.handleBar} />
-      <Text style={styles.handleHint}>Scroll for more</Text>
-    </View>
-  )}
-  <ScrollView
-    style={{ flex: 1 }}
-    contentContainerStyle={styles.scientificInner}
-    showsVerticalScrollIndicator={true}
-    scrollEnabled={isSciOpen}
-  >
-    {sciRows.map(renderSciRow)}
-  </ScrollView>
-</Animated.View>
+      <Animated.View style={[styles.scientificPanel, { height: sciHeight }]}>
+        {isSciOpen && (
+          <View style={styles.handleWrap}>
+            <View style={styles.handleBar} />
+            <Text style={styles.handleHint}>Scroll for more</Text>
+          </View>
+        )}
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scientificInner}
+          showsVerticalScrollIndicator={true}
+          scrollEnabled={isSciOpen}
+        >
+          {sciRows.map(renderSciRow)}
+        </ScrollView>
+      </Animated.View>
 
       {/* Basic keypad */}
       <View style={styles.keypad}>{basicRows.map(renderBasicRow)}</View>
@@ -355,13 +441,15 @@ function CalcKey({
   compact = false,
   wide = false,
   display,
+  styles,
 }: {
   label: string;
   onPress: (label: string) => void;
   variant?: KeyVariant;
   compact?: boolean;
   wide?: boolean;
-  display?: string; // 👈 new
+  display?: string; // for custom label text
+  styles: ReturnType<typeof createStyles>;
 }) {
   const stylesByVariant: Record<KeyVariant, object[]> = {
     default: [styles.key, styles.keyDefault],
@@ -395,7 +483,7 @@ function CalcKey({
         ]}
         numberOfLines={2}
       >
-        {display ?? label} {/* 👈 use display label if provided */}
+        {display ?? label}
       </Text>
     </Pressable>
   );
@@ -404,95 +492,103 @@ function CalcKey({
 const BUTTON = 72;
 const SPACE = 10;
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0b0b0c" },
+function createStyles(t: ThemeColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: t.bg },
 
-  display: {
-    paddingHorizontal: 16,
-    paddingTop: 24,
-    paddingBottom: 16,
-    minHeight: 140,
-    backgroundColor: "#0b0b0c",
-    justifyContent: "flex-end",
-  },
-  expressionWrap: { alignItems: "center" },
-  expressionText: { color: "#9aa0a6", fontSize: 24, letterSpacing: 0.5 },
-  resultText: { color: "#ffffff", fontSize: 48, fontWeight: "700", marginTop: 6 },
+    topBar: {
+      paddingHorizontal: 12,
+      paddingTop: 8,
+      paddingBottom: 4,
+      backgroundColor: t.surface,
+      alignItems: "flex-end",
+    },
+    themeChip: {
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      backgroundColor: t.primary + "22", // translucent pink
+      borderWidth: 1,
+      borderColor: t.borderAlt,
+    },
+    themeChipText: {
+      color: t.primary,
+      fontSize: 12,
+      fontWeight: "700",
+    },
 
-  scientificPanel: {
-    overflow: "hidden",
-    backgroundColor: "#0e0f11",
-    borderTopWidth: 1,
-    borderTopColor: "#181a1f",
-  },
-  scientificInner: {
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 6,
-    opacity: 0.95,
-  },
-  sciRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: SPACE,
-  },
+    display: {
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      paddingBottom: 16,
+      minHeight: 140,
+      backgroundColor: t.surface,
+      justifyContent: "flex-end",
+    },
+    expressionWrap: { alignItems: "center" },
+    expressionText: { color: t.textDim, fontSize: 24, letterSpacing: 0.5 },
+    resultText: { color: t.text, fontSize: 48, fontWeight: "700", marginTop: 6 },
 
-  keypad: { padding: 12, backgroundColor: "#0b0b0c" },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: SPACE,
-  },
+    scientificPanel: {
+      overflow: "hidden",
+      backgroundColor: t.surfaceAlt,
+      borderTopWidth: 1,
+      borderTopColor: t.border,
+    },
+    scientificInner: {
+      paddingHorizontal: 12,
+      paddingTop: 12,
+      paddingBottom: 6,
+      opacity: 0.98,
+    },
+    handleWrap: { alignItems: "center", paddingTop: 6 },
+    handleBar: { width: 44, height: 4, borderRadius: 2, backgroundColor: t.handle, marginBottom: 6 },
+    handleHint: { color: t.textDim, fontSize: 12, fontWeight: "500", marginBottom: 6 },
 
-  key: {
-    height: BUTTON,
-    width: (BUTTON * 4 + SPACE * 3) / 4, // auto fit 4 per row
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 0,
-  },
-  keyWide: {
-    flexGrow: 1,
-    width: undefined,
-  },
-  keyCompact: {
-    height: 56,
-    borderRadius: 14,
-  },
+    sciRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: SPACE,
+    },
 
-  keyDefault: { backgroundColor: "#1a1c22" },
-  keyOperator: { backgroundColor: "#2b2f3a", borderWidth: 1, borderColor: "#3a4150" },
-  keyAccent: { backgroundColor: "#3a4bff" },
-  keyMuted: { backgroundColor: "#15171c", borderWidth: 1, borderColor: "#1f222a" },
-  keyScientific: { backgroundColor: "#14161b", borderWidth: 1, borderColor: "#222631" },
-  keyToggle: { backgroundColor: "#10131a", borderWidth: 1, borderColor: "#3a4bff" },
+    keypad: { padding: 12, backgroundColor: t.surface },
+    row: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      marginBottom: SPACE,
+    },
 
-  keyPressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
+    key: {
+      height: BUTTON,
+      width: (BUTTON * 4 + SPACE * 3) / 4,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    keyWide: { flexGrow: 1, width: undefined },
+    keyCompact: { height: 56, borderRadius: 14 },
 
-  keyText: {
-    color: "#e7ebf0",
-    fontSize: 24,
-    fontWeight: "600",
-    textAlign: "center", // center lines
-    width: "100%",       // make Text fill the button width so centering works
-  },
-  
-  keyTextOperator: { color: "#e7ebf0" },
-  keyTextAccent: { color: "#ffffff" },
-  keyTextMuted: { color: "#9aa0a6", fontSize: 11, fontWeight: "600" },
-  keyTextScientific: { color: "#c7cbd3", fontSize: 18, fontWeight: "600" },
-  keyTextToggle: { color: "#aeb7ff", fontSize: 18, fontWeight: "700", letterSpacing: 0.5 },
-  keyTextCompact: { fontSize: 18, fontWeight: "600" },
+    keyDefault: { backgroundColor: t.keyDefault },
+    keyOperator: { backgroundColor: t.keyOperator, borderWidth: 1, borderColor: t.borderAlt },
+    keyAccent: { backgroundColor: t.keyAccent },
+    keyMuted: { backgroundColor: t.keyMuted, borderWidth: 1, borderColor: t.border },
+    keyScientific: { backgroundColor: t.keyScientific, borderWidth: 1, borderColor: t.border },
+    keyToggle: { backgroundColor: t.keyMuted, borderWidth: 1, borderColor: t.primary },
 
-  handleWrap: { alignItems: "center", paddingTop: 6 },
-  handleBar: {
-    width: 44,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#2a2f3a",
-    marginBottom: 6,
-  },
-  handleHint: { color: "#9aa0a6", fontSize: 12, fontWeight: "500", marginBottom: 6 },
+    keyPressed: { opacity: 0.9, transform: [{ scale: 0.98 }] },
 
-});
+    keyText: {
+      color: t.text,
+      fontSize: 24,
+      fontWeight: "600",
+      textAlign: "center",
+      width: "100%",
+    },
+    keyTextOperator: { color: t.text },
+    keyTextAccent: { color: t.textAccent },
+    keyTextMuted: { color: t.textDim, fontSize: 11, fontWeight: "600" },
+    keyTextScientific: { color: t.textDim, fontSize: 18, fontWeight: "600" },
+    keyTextToggle: { color: t.primary, fontSize: 18, fontWeight: "700", letterSpacing: 0.5 },
+    keyTextCompact: { fontSize: 18, fontWeight: "600" },
+  });
+}
